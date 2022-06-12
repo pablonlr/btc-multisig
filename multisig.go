@@ -40,8 +40,9 @@ func NewMultiSigAddress(net *chaincfg.Params, signaturesRequired int, strPubKeys
 	addr := &MultiSigAddress{
 		signaturesRequired: signaturesRequired,
 		publicKeys:         pubKey,
+		Network:            net,
 	}
-	err := addr.buildRedeemScript()
+	err = addr.buildRedeemScript()
 	if err != nil {
 		return nil, err
 	}
