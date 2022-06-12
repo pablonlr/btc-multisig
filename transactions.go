@@ -78,18 +78,22 @@ func NewSpendFromMultiSigTransaction(multisigAddress *MultiSigAddress, utxos []U
 
 }
 
-func (tx *SpendFromMultiSigTransaction) Sign(WIF string, sigType txscript.SigHashType) error {
+func (tx *SpendFromMultiSigTransaction) SignWithWIF(WIF string, sigType txscript.SigHashType) error {
 	wif, err := btcutil.DecodeWIF(WIF)
 	if err != nil {
 		return err
 	}
 	privkey := wif.PrivKey
+	return tx.sign(privkey, sigType)
+}
 
+func (tx *SpendFromMultiSigTransaction) sign(privkey *btcec.PrivateKey, sigType txscript.SigHashType) error {
 	pubkey := privkey.PubKey()
-	err = tx.isSigned(pubkey)
+	err := tx.isSigned(pubkey)
 	if err != nil {
 		return err
 	}
+	tx.signedCount[pubkey.X().String()] = make([][]byte, len(tx.baseTX.TxIn))
 
 	for i := range tx.baseTX.TxIn {
 		signature, err := txscript.RawTxInSignature(tx.baseTX, i, tx.Address.redeemScript, txscript.SigHashType(sigType), privkey)
@@ -98,8 +102,17 @@ func (tx *SpendFromMultiSigTransaction) Sign(WIF string, sigType txscript.SigHas
 		}
 		tx.signedCount[pubkey.X().String()][i] = signature
 	}
-
 	return nil
+}
+
+func (tx *SpendFromMultiSigTransaction) Sign(privKey string, sigType txscript.SigHashType) error {
+	pkBytes, err := hex.DecodeString(privKey)
+	if err != nil {
+		return err
+	}
+	privkey, _ := btcec.PrivKeyFromBytes(pkBytes)
+	return tx.sign(privkey, sigType)
+
 }
 
 /*
@@ -132,8 +145,11 @@ func (tx *SpendFromMultiSigTransaction) BuildScript() error {
 		return fmt.Errorf("missing signatures, got %d of %d required", tx.NumberOfSignaturesProvided(), tx.Address.signaturesRequired)
 	}
 	for _, x := range tx.signedCount {
-		for i := range x {
-			tx.buildRespectiveInputScript(i)
+		for input := range x {
+			err := tx.buildRespectiveInputScript(input)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -143,11 +159,12 @@ func (tx *SpendFromMultiSigTransaction) buildRespectiveInputScript(inputIndex in
 	if tx.NumberOfSignaturesProvided() < tx.Address.signaturesRequired {
 		return fmt.Errorf("missing signatures, got %d of %d required", tx.NumberOfSignaturesProvided(), tx.Address.signaturesRequired)
 	}
-	if inputIndex <= 0 || inputIndex >= len(tx.baseTX.TxIn) {
+	if inputIndex < 0 || inputIndex >= len(tx.baseTX.TxIn) {
 		return errors.New("ivalid input index")
 	}
 	scriptBuilder := txscript.NewScriptBuilder()
 	scriptBuilder.AddOp(txscript.OP_FALSE)
+
 	for _, x := range tx.signedCount {
 		if x != nil {
 			scriptBuilder.AddData(x[inputIndex])
